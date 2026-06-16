@@ -1,5 +1,27 @@
 import { useEffect, useRef, useState } from 'react'
+import { motion, animate } from 'framer-motion'
+import { Video, Mic, Zap, AlertTriangle, Play, Square, Activity } from 'lucide-react'
 import './App.css'
+
+// Helper component to animate numbers smoothly
+function AnimatedNumber({ value }) {
+  const nodeRef = useRef(null)
+
+  useEffect(() => {
+    const node = nodeRef.current
+    if (!node || value === null) return
+    const controls = animate(parseFloat(node.textContent) || 0, value, {
+      duration: 0.5,
+      ease: "easeOut",
+      onUpdate(v) {
+        node.textContent = v.toFixed(2)
+      }
+    })
+    return () => controls.stop()
+  }, [value])
+
+  return <span ref={nodeRef}>{value === null ? "" : value.toFixed(2)}</span>
+}
 
 const FaceMesh = window.FaceMesh
 const Camera = window.Camera
@@ -189,87 +211,118 @@ function App() {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px', padding: '40px' }}>
-      <h1>Aria — Minimal WebSockets + MediaPipe Skeleton</h1>
+    <div className="app-container">
+      <div className="header">
+        <h1>Aria</h1>
+        <p>Multimodal Emotion Fusion & Conflict Detection</p>
+      </div>
       
-      <div style={{ display: 'flex', gap: '10px' }}>
+      <div className="controls">
         {!sessionActive ? (
-          <button onClick={startSession} style={{ padding: '10px 20px', fontSize: '16px' }}>Start Session</button>
+          <button className="btn btn-primary" onClick={startSession}>
+            <Play size={20} /> Start Analysis
+          </button>
         ) : (
-          <button onClick={endSession} style={{ padding: '10px 20px', fontSize: '16px', background: 'red', color: 'white' }}>End Session</button>
+          <button className="btn btn-danger" onClick={endSession}>
+            <Square size={20} /> Stop Session
+          </button>
         )}
       </div>
 
-      <div style={{ display: 'flex', gap: '20px', marginTop: '20px' }}>
-        {/* Hidden video element used strictly for feeding MediaPipe */}
-        <video 
-          ref={videoRef} 
-          style={{ display: 'none' }} 
-          playsInline 
-          onLoadedData={handleVideoLoaded}
-        />
-        
-        {/* Visible canvas showing the webcam and landmarks */}
-        <canvas 
-          ref={canvasRef} 
-          width={640} 
-          height={480} 
-          style={{ border: '2px solid #ccc', borderRadius: '8px', backgroundColor: '#000' }}
-        />
-      </div>
-      
-      {sessionActive && metrics && (
-        <div style={{ 
-          marginTop: '20px', 
-          padding: '20px', 
-          background: '#1a1a1a', 
-          borderRadius: '12px', 
-          color: 'white',
-          width: '640px',
-          boxSizing: 'border-box'
-        }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #333', paddingBottom: '10px', marginBottom: '15px' }}>
-            <h2 style={{ margin: 0 }}>Live ML Diagnostics</h2>
-            <div style={{
-              background: metrics.fusion_mode === 'full' ? '#32CD32' : 
-                          metrics.fusion_mode === 'degraded' ? '#ff4444' : '#f39c12',
-              color: 'black', padding: '4px 10px', borderRadius: '12px', fontSize: '12px', fontWeight: 'bold'
-            }}>
-              MODE: {metrics.fusion_mode?.toUpperCase()}
-            </div>
-          </div>
-          
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
-            <div style={{ background: '#333', padding: '15px', borderRadius: '8px' }}>
-              <div style={{ fontSize: '14px', color: '#aaa', marginBottom: '5px' }}>Face Emotion (MediaPipe)</div>
-              <div style={{ fontSize: '24px', fontWeight: 'bold', color: metrics.face_score === null ? '#ff4444' : '#32CD32' }}>
-                {metrics.face_score === null ? 'NULL (Low Conf)' : metrics.face_score.toFixed(2)}
-              </div>
-            </div>
-            
-            <div style={{ background: '#333', padding: '15px', borderRadius: '8px' }}>
-              <div style={{ fontSize: '14px', color: '#aaa', marginBottom: '5px' }}>Audio Emotion (WavLM)</div>
-              <div style={{ fontSize: '24px', fontWeight: 'bold', color: metrics.audio_score === null ? '#ff4444' : '#00BFFF' }}>
-                {metrics.audio_score === null ? 'NULL (Stale)' : metrics.audio_score.toFixed(2)}
-              </div>
-            </div>
-            
-            <div style={{ background: '#333', padding: '15px', borderRadius: '8px', border: '1px solid #00BFFF' }}>
-              <div style={{ fontSize: '14px', color: '#00BFFF', marginBottom: '5px' }}>Fused Score</div>
-              <div style={{ fontSize: '28px', fontWeight: 'bold', color: 'white' }}>
-                {(metrics.fused_score || 0).toFixed(2)}
-              </div>
-            </div>
-
-            <div style={{ background: '#333', padding: '15px', borderRadius: '8px', border: metrics.conflict_score > 0.5 ? '2px solid #ff4444' : '1px solid #555' }}>
-              <div style={{ fontSize: '14px', color: metrics.conflict_score > 0.5 ? '#ff4444' : '#aaa', marginBottom: '5px' }}>Conflict Classifier (LR)</div>
-              <div style={{ fontSize: '28px', fontWeight: 'bold', color: metrics.conflict_score > 0.5 ? '#ff4444' : (metrics.conflict_score === null ? '#aaa' : 'white') }}>
-                {metrics.conflict_score === null ? 'N/A' : `${(metrics.conflict_score * 100).toFixed(1)}%`}
-              </div>
-            </div>
-          </div>
+      <div className="dashboard-grid">
+        {/* Left: Video Feed */}
+        <div className="video-section">
+          <motion.div 
+            className={`video-container mode-${metrics?.fusion_mode || 'degraded'}`}
+            layout
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+          >
+            <video 
+              ref={videoRef} 
+              style={{ display: 'none' }} 
+              playsInline 
+              onLoadedData={handleVideoLoaded}
+            />
+            <canvas ref={canvasRef} width={640} height={480} />
+          </motion.div>
         </div>
-      )}
+        
+        {/* Right: Metrics Dashboard */}
+        {sessionActive && metrics && (
+          <motion.div 
+            className="glass-panel metrics-dashboard"
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+          >
+            <div className="status-header">
+              <h2>System Status</h2>
+              <span className={`badge ${metrics.fusion_mode}`}>
+                {metrics.fusion_mode.replace('_', ' ')}
+              </span>
+            </div>
+            
+            <div className="metrics-grid">
+              
+              {/* Face Score */}
+              <div className="metric-card metric-face">
+                <div className="metric-info">
+                  <div className="metric-icon"><Video size={20} /></div>
+                  <div className="metric-name">Facial Emotion</div>
+                </div>
+                <div className="metric-value">
+                  {metrics.face_score === null ? 
+                    <span className="metric-null">LOW CONF</span> : 
+                    <AnimatedNumber value={metrics.face_score} />
+                  }
+                </div>
+              </div>
+              
+              {/* Audio Score */}
+              <div className="metric-card metric-audio">
+                <div className="metric-info">
+                  <div className="metric-icon"><Mic size={20} /></div>
+                  <div className="metric-name">Vocal Tone</div>
+                </div>
+                <div className="metric-value">
+                  {metrics.audio_score === null ? 
+                    <span className="metric-null">STALE</span> : 
+                    <AnimatedNumber value={metrics.audio_score} />
+                  }
+                </div>
+              </div>
+              
+              {/* Fused Score */}
+              <div className="metric-card metric-fused">
+                <div className="metric-info">
+                  <div className="metric-icon"><Zap size={20} /></div>
+                  <div className="metric-name">Fused Output</div>
+                </div>
+                <div className="metric-value">
+                  <AnimatedNumber value={metrics.fused_score} />
+                </div>
+              </div>
+
+              {/* Conflict Classifier */}
+              <div className={`metric-card metric-conflict ${metrics.conflict_score > 0.5 ? 'conflict-active' : ''}`}>
+                <div className="metric-info">
+                  <div className="metric-icon">
+                    {metrics.conflict_score > 0.5 ? <AlertTriangle size={20} /> : <Activity size={20} />}
+                  </div>
+                  <div className="metric-name">Conflict Detection</div>
+                </div>
+                <div className="metric-value">
+                  {metrics.conflict_score === null ? 
+                    <span className="metric-null">N/A</span> : 
+                    <AnimatedNumber value={metrics.conflict_score * 100} /><span style={{fontSize: '1rem'}}>%</span>
+                  }
+                </div>
+              </div>
+
+            </div>
+          </motion.div>
+        )}
+      </div>
     </div>
   )
 }
