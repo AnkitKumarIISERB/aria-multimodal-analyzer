@@ -13,5 +13,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
+# Generate the conflict model binary during the image build
+RUN python train_conflict_model.py
+
 # Command is overridden in docker-compose
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
