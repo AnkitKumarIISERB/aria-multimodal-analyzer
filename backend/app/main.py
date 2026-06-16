@@ -4,6 +4,8 @@ import time
 import os
 import joblib
 import numpy as np
+import httpx
+import logging
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -17,41 +19,38 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+logger = logging.getLogger(__name__)
+
 # Environment Config
-USE_REAL_CELERY = os.getenv("USE_CELERY", "false").lower() == "true"
+HF_INFERENCE_URL = os.getenv("HF_INFERENCE_URL", "")
 AUDIO_WEIGHT = float(os.getenv("AUDIO_WEIGHT", "0.7"))
 FACE_WEIGHT = float(os.getenv("FACE_WEIGHT", "0.3"))
 FACE_CONFIDENCE_THRESHOLD = float(os.getenv("FACE_CONFIDENCE_THRESHOLD", "0.6"))
 
-# State Management Abstraction
-if USE_REAL_CELERY:
-    import redis.asyncio as redis
-    redis_url = os.environ.get("REDIS_URL", "redis://redis:6379/0")
-    redis_client = redis.from_url(redis_url, decode_responses=True)
-else:
-    active_sessions = {}
+# Single-instance state management
+active_sessions = {}
 
 async def set_state(session_id: str, key: str, value_dict: dict):
-    if USE_REAL_CELERY:
-        await redis_client.set(f"session:{session_id}:{key}", json.dumps(value_dict))
-    else:
-        if session_id not in active_sessions:
-            active_sessions[session_id] = {}
-        active_sessions[session_id][key] = value_dict
+    if session_id not in active_sessions:
+        active_sessions[session_id] = {}
+    active_sessions[session_id][key] = value_dict
 
 async def get_state(session_id: str, key: str) -> dict:
-    if USE_REAL_CELERY:
-        data_str = await redis_client.get(f"session:{session_id}:{key}")
-        return json.loads(data_str) if data_str else {}
-    else:
-        return active_sessions.get(session_id, {}).get(key, {})
+    return active_sessions.get(session_id, {}).get(key, {})
 
 async def clear_state(session_id: str, key: str):
-    if USE_REAL_CELERY:
-        await redis_client.delete(f"session:{session_id}:{key}")
-    else:
-        if session_id in active_sessions and key in active_sessions[session_id]:
-            del active_sessions[session_id][key]
+    if session_id in active_sessions and key in active_sessions[session_id]:
+        del active_sessions[session_id][key]
+
+@app.on_event("startup")
+async def warmup_hf_space():
+    if HF_INFERENCE_URL:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            try:
+                await client.get(f"{HF_INFERENCE_URL}/warmup")
+                logger.info("HF Space warmed up successfully")
+            except Exception as e:
+                logger.warning(f"HF Space warmup failed: {e}")
 
 # Load conflict model
 conflict_model = None
@@ -75,7 +74,26 @@ async def mock_audio_worker(session_id: str, data: bytes):
         "score": wavlm_score,
         "timestamp": time.time()
     })
-    # print(f"[Mock Celery] Processed audio chunk for {session_id} -> Score: {wavlm_score}")
+
+async def call_hf_inference(audio_bytes: bytes, session_id: str):
+    """Fire-and-forget HF inference. Updates session state when complete."""
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                f"{HF_INFERENCE_URL}/infer",
+                content=audio_bytes,
+                headers={"Content-Type": "application/octet-stream"}
+            )
+            if response.status_code == 200:
+                score = response.json()["emotion_score"]
+                await set_state(session_id, "audio", {
+                    "score": score,
+                    "timestamp": time.time()
+                })
+    except httpx.TimeoutException:
+        logger.warning(f"HF inference timeout for session {session_id}")
+    except Exception as e:
+        logger.error(f"HF inference error: {e}")
 
 
 @app.get("/health")
@@ -90,9 +108,8 @@ async def audio_stream(websocket: WebSocket, session_id: str):
         while True:
             data = await websocket.receive_bytes()
             
-            if USE_REAL_CELERY:
-                from app.core.tasks import process_audio_chunk
-                process_audio_chunk.delay(session_id, data)
+            if HF_INFERENCE_URL:
+                asyncio.create_task(call_hf_inference(data, session_id))
             else:
                 asyncio.create_task(mock_audio_worker(session_id, data))
             

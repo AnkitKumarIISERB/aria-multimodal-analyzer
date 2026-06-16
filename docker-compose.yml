@@ -17,10 +17,7 @@ services:
       timeout: 5s
       retries: 5
 
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
+
 
   backend:
     build:
@@ -33,33 +30,12 @@ services:
       - "8000:8000"
     environment:
       - DATABASE_URL=postgresql://aria:aria_password@db:5432/aria_db
-      - REDIS_URL=redis://redis:6379/0
-      - USE_CELERY=true
+      - HF_INFERENCE_URL=http://hf_space:8001
     depends_on:
       db:
         condition: service_healthy
-      redis:
-        condition: service_started
 
-  celery_worker:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    command: celery -A app.core.tasks worker --loglevel=info --concurrency=2
-    volumes:
-      - ./backend:/app
-      - wavlm_cache:/app/model_cache
-    environment:
-      - DATABASE_URL=postgresql://aria:aria_password@db:5432/aria_db
-      - REDIS_URL=redis://redis:6379/0
-      - USE_CELERY=true
-      - HF_CACHE_DIR=/app/model_cache
-    depends_on:
-      redis:
-        condition: service_started
-      db:
-        condition: service_healthy
+
 
 volumes:
   postgres_data:
-  wavlm_cache:
