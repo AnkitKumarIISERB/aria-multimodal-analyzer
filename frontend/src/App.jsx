@@ -314,7 +314,7 @@ function App() {
                 <div className="metric-value">
                   {metrics.conflict_score === null ? 
                     <span className="metric-null">N/A</span> : 
-                    <AnimatedNumber value={metrics.conflict_score * 100} /><span style={{fontSize: '1rem'}}>%</span>
+                    <><AnimatedNumber value={metrics.conflict_score * 100} /><span style={{fontSize: '1rem'}}>%</span></>
                   }
                 </div>
               </div>
