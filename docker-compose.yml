@@ -1,0 +1,65 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: aria
+      POSTGRES_PASSWORD: aria_password
+      POSTGRES_DB: aria_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aria"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./backend:/app
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://aria:aria_password@db:5432/aria_db
+      - REDIS_URL=redis://redis:6379/0
+      - USE_CELERY=true
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  celery_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: celery -A app.core.tasks worker --loglevel=info --concurrency=2
+    volumes:
+      - ./backend:/app
+      - wavlm_cache:/app/model_cache
+    environment:
+      - DATABASE_URL=postgresql://aria:aria_password@db:5432/aria_db
+      - REDIS_URL=redis://redis:6379/0
+      - USE_CELERY=true
+      - HF_CACHE_DIR=/app/model_cache
+    depends_on:
+      redis:
+        condition: service_started
+      db:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  wavlm_cache:
