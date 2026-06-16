@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { motion, animate } from 'framer-motion'
-import { Video, Mic, Zap, AlertTriangle, Play, Square, Activity } from 'lucide-react'
+import { Video, Mic, Zap, AlertTriangle, Play, Square, Activity, Eye, EyeOff, Clock, HardDrive } from 'lucide-react'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import './App.css'
 
-// Helper component to animate numbers smoothly
 function AnimatedNumber({ value }) {
   const nodeRef = useRef(null)
 
@@ -27,21 +27,15 @@ const FaceMesh = window.FaceMesh
 const Camera = window.Camera
 
 function computeFaceConfidence(landmarks, videoWidth, videoHeight) {
-  // Bounding box coverage
   const xs = landmarks.map(l => l.x);
   const ys = landmarks.map(l => l.y);
   const boxArea = (Math.max(...xs) - Math.min(...xs)) * 
                   (Math.max(...ys) - Math.min(...ys));
   
-  // Yaw estimation: difference in z between left/right temples
-  // Landmarks 234 (right temple) and 454 (left temple)
   const yaw = Math.abs(landmarks[234].z - landmarks[454].z);
-  
-  // Pitch estimation: z difference between forehead and chin
-  // Landmarks 10 (forehead) and 152 (chin)  
   const pitch = Math.abs(landmarks[10].z - landmarks[152].z);
   
-  const sizeScore = Math.min(boxArea / 0.15, 1.0); // 0.15 = ~40% of frame
+  const sizeScore = Math.min(boxArea / 0.15, 1.0);
   const poseScore = Math.max(0, 1 - (yaw + pitch) / 0.3);
   
   return (sizeScore * 0.6) + (poseScore * 0.4);
@@ -50,16 +44,61 @@ function computeFaceConfidence(landmarks, videoWidth, videoHeight) {
 function App() {
   const videoRef = useRef(null)
   const canvasRef = useRef(null)
+  const waveformCanvasRef = useRef(null)
   const [sessionActive, setSessionActive] = useState(false)
   const [sessionId] = useState("session-" + Math.floor(Math.random() * 10000))
   const [metrics, setMetrics] = useState(null)
   
-  // WebSockets
+  // New State for UI expansions
+  const [metricsHistory, setMetricsHistory] = useState([])
+  const [showHud, setShowHud] = useState(false)
+  const [sessionDuration, setSessionDuration] = useState(0)
+  const [maxConflict, setMaxConflict] = useState(0)
+  const [chunksProcessed, setChunksProcessed] = useState(0)
+  
+  const showHudRef = useRef(showHud)
+  useEffect(() => { showHudRef.current = showHud }, [showHud])
+
+  // WebSockets & Audio Context
   const videoWsRef = useRef(null)
   const audioWsRef = useRef(null)
-  
-  // Media Recorder for audio
   const mediaRecorderRef = useRef(null)
+  const audioCtxRef = useRef(null)
+  const analyserRef = useRef(null)
+  const animationFrameRef = useRef(null)
+  const timerRef = useRef(null)
+
+  const drawWaveform = () => {
+    if (!analyserRef.current || !waveformCanvasRef.current) return
+    
+    const canvas = waveformCanvasRef.current
+    const ctx = canvas.getContext("2d")
+    const bufferLength = analyserRef.current.frequencyBinCount
+    const dataArray = new Uint8Array(bufferLength)
+    
+    analyserRef.current.getByteTimeDomainData(dataArray)
+    
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+    ctx.lineWidth = 2
+    ctx.strokeStyle = '#00E5FF'
+    ctx.beginPath()
+    
+    const sliceWidth = canvas.width * 1.0 / bufferLength
+    let x = 0
+    
+    for(let i = 0; i < bufferLength; i++) {
+      const v = dataArray[i] / 128.0
+      const y = v * canvas.height / 2
+      if(i === 0) ctx.moveTo(x, y)
+      else ctx.lineTo(x, y)
+      x += sliceWidth
+    }
+    
+    ctx.lineTo(canvas.width, canvas.height / 2)
+    ctx.stroke()
+    
+    animationFrameRef.current = requestAnimationFrame(drawWaveform)
+  }
 
   const startSession = async () => {
     try {
@@ -71,50 +110,58 @@ function App() {
       if (videoRef.current) {
         videoRef.current.srcObject = stream
       }
+
+      // Start Audio Visualizer
+      audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)()
+      const source = audioCtxRef.current.createMediaStreamSource(stream)
+      analyserRef.current = audioCtxRef.current.createAnalyser()
+      analyserRef.current.fftSize = 256
+      source.connect(analyserRef.current)
+      drawWaveform()
       
-      // Initialize Audio WS
+      // Initialize WebSockets
       audioWsRef.current = new WebSocket(`ws://localhost:8000/ws/stream/audio/${sessionId}`)
-      audioWsRef.current.onopen = () => console.log("[Audio WS] Connected")
-      
-      // Initialize Video WS
       videoWsRef.current = new WebSocket(`ws://localhost:8000/ws/stream/video/${sessionId}`)
-      videoWsRef.current.onopen = () => console.log("[Video WS] Connected")
+      
       videoWsRef.current.onmessage = (event) => {
         const data = JSON.parse(event.data)
-        // console.log("--> [Server Fused State]:", data)
-        setMetrics({
-          face_score: data.face_score,
-          audio_score: data.audio_score,
-          fused_score: data.fused_score,
-          conflict_score: data.conflict_score,
-          fusion_mode: data.fusion_mode,
-          face_stale: data.face_stale,
-          audio_stale: data.audio_stale
+        
+        setMetrics(data)
+        
+        setMetricsHistory(prev => {
+          const newHist = [...prev, { 
+            time: new Date().toLocaleTimeString([], {minute: '2-digit', second: '2-digit'}), 
+            fused: data.fused_score || 0, 
+            conflict: data.conflict_score || 0 
+          }]
+          if (newHist.length > 30) newHist.shift()
+          return newHist
         })
+
+        if (data.conflict_score > maxConflict) setMaxConflict(data.conflict_score)
+        setChunksProcessed(prev => prev + 1)
       }
 
-      // Handle Page Visibility for stale data protection
-      const handleVisibilityChange = () => {
-        if (document.hidden && videoWsRef.current?.readyState === WebSocket.OPEN) {
-          videoWsRef.current.send(JSON.stringify({ type: "video_paused" }))
-        }
-      }
       document.addEventListener("visibilitychange", handleVisibilityChange)
 
-      // Start Audio recording (500ms chunks)
-      // Note: In real ML pipeline we send PCM. For this skeleton, we just send dummy blobs.
       mediaRecorderRef.current = new MediaRecorder(stream)
       mediaRecorderRef.current.ondataavailable = (event) => {
         if (event.data.size > 0 && audioWsRef.current?.readyState === WebSocket.OPEN) {
-          // Sending dummy blob for now
           audioWsRef.current.send(event.data)
         }
       }
-      mediaRecorderRef.current.start(500) // 500ms chunks
+      mediaRecorderRef.current.start(500)
       
       setSessionActive(true)
+      timerRef.current = setInterval(() => setSessionDuration(p => p + 1), 1000)
     } catch (err) {
       console.error("Error starting session:", err)
+    }
+  }
+
+  const handleVisibilityChange = () => {
+    if (document.hidden && videoWsRef.current?.readyState === WebSocket.OPEN) {
+      videoWsRef.current.send(JSON.stringify({ type: "video_paused" }))
     }
   }
   
@@ -122,29 +169,27 @@ function App() {
     if (mediaRecorderRef.current) mediaRecorderRef.current.stop()
     if (videoWsRef.current) videoWsRef.current.close()
     if (audioWsRef.current) audioWsRef.current.close()
+    if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current)
+    if (audioCtxRef.current) audioCtxRef.current.close()
+    if (timerRef.current) clearInterval(timerRef.current)
     
     if (videoRef.current && videoRef.current.srcObject) {
       const tracks = videoRef.current.srcObject.getTracks()
       tracks.forEach(track => track.stop())
     }
     setSessionActive(false)
+    setSessionDuration(0)
+    setMetricsHistory([])
   }
 
   const faceMeshRef = useRef(null)
   const cameraRef = useRef(null)
 
-  // Handle MediaPipe Initialization once video starts playing
   const handleVideoLoaded = () => {
-    if (faceMeshRef.current) {
-      console.log("MediaPipe already initialized, skipping.")
-      return
-    }
-    console.log("Video loaded. Initializing MediaPipe FaceMesh...")
+    if (faceMeshRef.current) return
     
     const faceMesh = new FaceMesh({
-      locateFile: (file) => {
-        return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
-      }
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
     })
     
     faceMesh.setOptions({
@@ -155,50 +200,51 @@ function App() {
     })
     
     faceMesh.onResults((results) => {
-      // 1. Render to canvas
       const canvasCtx = canvasRef.current?.getContext('2d')
       if (canvasCtx && videoRef.current) {
         canvasCtx.save()
         canvasCtx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height)
         canvasCtx.drawImage(results.image, 0, 0, canvasRef.current.width, canvasRef.current.height)
         
-        // We no longer draw the scary green mesh on the user's face
-        // The landmarks are still computed and sent silently to the backend!
+        // HUD Overlay Toggle
+        if (showHudRef.current && results.multiFaceLandmarks) {
+          for (const landmarks of results.multiFaceLandmarks) {
+            canvasCtx.fillStyle = "rgba(0, 229, 255, 0.7)"
+            for (const pt of landmarks) {
+              const x = pt.x * canvasRef.current.width
+              const y = pt.y * canvasRef.current.height
+              canvasCtx.fillRect(x, y, 2, 2)
+            }
+          }
+        }
         canvasCtx.restore()
       }
       
-      // 2. Send landmarks to server over WS
       if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
         if (videoWsRef.current?.readyState === WebSocket.OPEN) {
           const landmarks = results.multiFaceLandmarks[0];
           const face_confidence = computeFaceConfidence(landmarks, canvasRef.current.width, canvasRef.current.height);
-          
-          const payload = {
-            type: "landmarks",
-            landmarks: landmarks,
-            face_confidence: face_confidence
-          }
-          // Sending REAL landmarks and confidence
-          videoWsRef.current.send(JSON.stringify(payload))
+          videoWsRef.current.send(JSON.stringify({ type: "landmarks", landmarks, face_confidence }))
         }
       }
     })
     
     faceMeshRef.current = faceMesh
-
-    // Start camera loop
     const camera = new Camera(videoRef.current, {
       onFrame: async () => {
-        if (videoRef.current) {
-          await faceMesh.send({ image: videoRef.current })
-        }
+        if (videoRef.current) await faceMesh.send({ image: videoRef.current })
       },
       width: 640,
       height: 480
     })
-    
     camera.start()
     cameraRef.current = camera
+  }
+
+  const formatTime = (seconds) => {
+    const m = Math.floor(seconds / 60).toString().padStart(2, '0')
+    const s = (seconds % 60).toString().padStart(2, '0')
+    return `${m}:${s}`
   }
 
   return (
@@ -214,29 +260,51 @@ function App() {
             <Play size={20} /> Start Analysis
           </button>
         ) : (
-          <button className="btn btn-danger" onClick={endSession}>
-            <Square size={20} /> Stop Session
-          </button>
+          <>
+            <button className="btn btn-secondary" onClick={() => setShowHud(!showHud)}>
+              {showHud ? <EyeOff size={20} /> : <Eye size={20} />} {showHud ? "Hide HUD" : "Show Face HUD"}
+            </button>
+            <button className="btn btn-danger" onClick={endSession}>
+              <Square size={20} /> Stop Session
+            </button>
+          </>
         )}
       </div>
 
       <div className="dashboard-grid">
-        {/* Left: Video Feed */}
+        {/* Left: Video & Graph */}
         <div className="video-section">
           <motion.div 
             className={`video-container mode-${metrics?.fusion_mode || 'degraded'}`}
-            layout
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
+            layout initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
           >
-            <video 
-              ref={videoRef} 
-              style={{ display: 'none' }} 
-              playsInline 
-              onLoadedData={handleVideoLoaded}
-            />
+            <video ref={videoRef} style={{ display: 'none' }} playsInline onLoadedData={handleVideoLoaded} />
             <canvas ref={canvasRef} width={640} height={480} />
+            
+            {sessionActive && (
+              <div className="waveform-overlay">
+                <canvas ref={waveformCanvasRef} width={640} height={80} />
+              </div>
+            )}
           </motion.div>
+
+          {sessionActive && metricsHistory.length > 0 && (
+            <motion.div className="glass-panel graph-panel" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+              <div className="graph-header">Live Timeseries (30s)</div>
+              <div style={{ width: '100%', height: 200 }}>
+                <ResponsiveContainer>
+                  <LineChart data={metricsHistory}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+                    <XAxis dataKey="time" stroke="rgba(255,255,255,0.3)" fontSize={12} />
+                    <YAxis stroke="rgba(255,255,255,0.3)" fontSize={12} domain={[0, 1]} />
+                    <Tooltip contentStyle={{ backgroundColor: '#1a1a1a', border: '1px solid #333' }} />
+                    <Line type="monotone" dataKey="fused" stroke="#FFFFFF" strokeWidth={2} dot={false} isAnimationActive={false} />
+                    <Line type="monotone" dataKey="conflict" stroke="#FF1744" strokeWidth={2} dot={false} isAnimationActive={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </motion.div>
+          )}
         </div>
         
         {/* Right: Metrics Dashboard */}
@@ -254,8 +322,6 @@ function App() {
             </div>
             
             <div className="metrics-grid">
-              
-              {/* Face Score */}
               <div className="metric-card metric-face">
                 <div className="metric-info">
                   <div className="metric-icon"><Video size={20} /></div>
@@ -269,7 +335,6 @@ function App() {
                 </div>
               </div>
               
-              {/* Audio Score */}
               <div className="metric-card metric-audio">
                 <div className="metric-info">
                   <div className="metric-icon"><Mic size={20} /></div>
@@ -283,7 +348,6 @@ function App() {
                 </div>
               </div>
               
-              {/* Fused Score */}
               <div className="metric-card metric-fused">
                 <div className="metric-info">
                   <div className="metric-icon"><Zap size={20} /></div>
@@ -294,7 +358,6 @@ function App() {
                 </div>
               </div>
 
-              {/* Conflict Classifier */}
               <div className={`metric-card metric-conflict ${metrics.conflict_score > 0.5 ? 'conflict-active' : ''}`}>
                 <div className="metric-info">
                   <div className="metric-icon">
@@ -309,7 +372,18 @@ function App() {
                   }
                 </div>
               </div>
+            </div>
 
+            <div className="session-stats">
+              <div className="stat-item">
+                <Clock size={16} /> {formatTime(sessionDuration)}
+              </div>
+              <div className="stat-item">
+                <AlertTriangle size={16} /> Max Conflict: {(maxConflict * 100).toFixed(0)}%
+              </div>
+              <div className="stat-item">
+                <HardDrive size={16} /> Data Chunks: {chunksProcessed}
+              </div>
             </div>
           </motion.div>
         )}
