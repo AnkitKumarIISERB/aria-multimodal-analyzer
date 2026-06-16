@@ -162,17 +162,8 @@ function App() {
         canvasCtx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height)
         canvasCtx.drawImage(results.image, 0, 0, canvasRef.current.width, canvasRef.current.height)
         
-        // Render landmarks (dummy rendering for skeleton)
-        if (results.multiFaceLandmarks) {
-          for (const landmarks of results.multiFaceLandmarks) {
-            canvasCtx.fillStyle = "#32CD32"
-            for (const pt of landmarks) {
-              const x = pt.x * canvasRef.current.width
-              const y = pt.y * canvasRef.current.height
-              canvasCtx.fillRect(x, y, 2, 2)
-            }
-          }
-        }
+        // We no longer draw the scary green mesh on the user's face
+        // The landmarks are still computed and sent silently to the backend!
         canvasCtx.restore()
       }
       
