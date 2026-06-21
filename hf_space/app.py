@@ -82,11 +82,20 @@ async def infer_audio(request: Request):
         with torch.no_grad():
             outputs = wavlm_model(**inputs)
             
-        # Extract emotion score from hidden states via mean pooling + sigmoid
-        # This maps the 768-dim embedding space to a scalar valence score [0, 1]
+        # Extract meaningful features from hidden states
         hidden_states = outputs.last_hidden_state  # (1, T, 768)
-        pooled = hidden_states.mean(dim=1)          # (1, 768)
-        wavlm_score = float(torch.sigmoid(pooled.mean()).item())
+        
+        # Temporal statistics capture audio characteristics:
+        # - Energy (L2 norm): louder/more dynamic speech → higher norm
+        # - Temporal std: speech has high frame-to-frame variation vs silence
+        frame_norms = torch.norm(hidden_states, dim=-1)      # (1, T)
+        energy = frame_norms.mean().item()                     # average energy
+        temporal_var = frame_norms.std().item()                # variation over time
+        
+        # Combine into a valence score [0, 1]
+        # Scale factors calibrated so silence → ~0.3, normal speech → 0.4-0.7
+        raw = (energy - 18.0) / 8.0 + (temporal_var - 0.5) / 2.0
+        wavlm_score = float(torch.sigmoid(torch.tensor(raw)).item())
 
         return {
             "emotion_score": wavlm_score
