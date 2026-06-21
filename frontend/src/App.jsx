@@ -119,9 +119,13 @@ function App() {
       source.connect(analyserRef.current)
       drawWaveform()
       
-      // Initialize WebSockets
-      audioWsRef.current = new WebSocket(`ws://localhost:8000/ws/stream/audio/${sessionId}`)
-      videoWsRef.current = new WebSocket(`ws://localhost:8000/ws/stream/video/${sessionId}`)
+      // Initialize WebSockets dynamically from VITE_API_URL
+      const WS_BASE = (import.meta.env.VITE_API_URL || "http://localhost:8000")
+        .replace(/^https/, "wss")
+        .replace(/^http/, "ws");
+        
+      audioWsRef.current = new WebSocket(`${WS_BASE}/ws/stream/audio/${sessionId}`)
+      videoWsRef.current = new WebSocket(`${WS_BASE}/ws/stream/video/${sessionId}`)
       
       videoWsRef.current.onmessage = (event) => {
         const data = JSON.parse(event.data)
