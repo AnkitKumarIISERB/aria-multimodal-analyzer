@@ -93,14 +93,13 @@ async def infer_audio(request: Request):
         temporal_var = frame_norms.std().item()                # variation over time
         
         # Combine into a valence score [0, 1]
-        # Calibrated against measured values: silence energy~16, tone~17, speech~19-22
-        raw = (energy - 15.0) / 4.0 + (temporal_var - 0.3) / 1.0
+        # Calibrated: energy ~10.0-10.6, temporal_var drives differentiation
+        # silence→~0.47, speech→0.5-0.7, loud/dynamic→0.7-0.8
+        raw = (energy - 10.0) / 2.0 + (temporal_var - 0.1) / 0.5
         wavlm_score = float(torch.sigmoid(torch.tensor(raw)).item())
 
         return {
-            "emotion_score": wavlm_score,
-            "debug_energy": round(energy, 3),
-            "debug_temporal_var": round(temporal_var, 3)
+            "emotion_score": wavlm_score
         }
     except Exception as e:
         logger.error(f"Inference error: {e}")
