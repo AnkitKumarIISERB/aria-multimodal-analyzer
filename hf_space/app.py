@@ -70,12 +70,14 @@ async def infer_audio(request: Request):
     import numpy as np
 
     try:
-        # Convert raw bytes to a dummy numpy array (since we aren't using librosa for the skeleton)
-        # In a real app, you would decode the audio bytes using soundfile/librosa.
-        # For this demonstration of actual inference, we create a valid tensor of the right shape.
-        dummy_audio = np.random.randn(16000).astype(np.float32) # 1 second of 16kHz audio
+        # Decode raw PCM Float32 audio sent by the frontend ScriptProcessorNode
+        audio_array = np.frombuffer(audio_bytes, dtype=np.float32)
         
-        inputs = wavlm_processor(dummy_audio, sampling_rate=16000, return_tensors="pt", padding=True)
+        # Ensure minimum length for WavLM (pad with zeros if too short)
+        if len(audio_array) < 1600:  # minimum ~100ms at 16kHz
+            audio_array = np.pad(audio_array, (0, 1600 - len(audio_array)))
+        
+        inputs = wavlm_processor(audio_array, sampling_rate=16000, return_tensors="pt", padding=True)
         
         with torch.no_grad():
             outputs = wavlm_model(**inputs)
