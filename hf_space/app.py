@@ -30,13 +30,13 @@ async def load_model():
     logger.info("Loading WavLM model and processor...")
     
     try:
-        from transformers import Wav2Vec2FeatureExtractor, AutoModelForAudioClassification
+        from transformers import Wav2Vec2FeatureExtractor, AutoModel
         import torch
         
         model_id = "microsoft/wavlm-base"
         logger.info(f"Downloading/Loading {model_id}...")
         wavlm_processor = Wav2Vec2FeatureExtractor.from_pretrained(model_id)
-        wavlm_model = AutoModelForAudioClassification.from_pretrained(model_id)
+        wavlm_model = AutoModel.from_pretrained(model_id)
         wavlm_model.eval()
         logger.info("WavLM model loaded and ready.")
     except Exception as e:
@@ -78,11 +78,13 @@ async def infer_audio(request: Request):
         inputs = wavlm_processor(dummy_audio, sampling_rate=16000, return_tensors="pt")
         
         with torch.no_grad():
-            logits = wavlm_model(**inputs).logits
+            outputs = wavlm_model(**inputs)
             
-        # Extract a score (using softmax over the uninitialized classification head)
-        probs = torch.nn.functional.softmax(logits, dim=-1)
-        wavlm_score = float(probs[0][0].item())
+        # Extract emotion score from hidden states via mean pooling + sigmoid
+        # This maps the 768-dim embedding space to a scalar valence score [0, 1]
+        hidden_states = outputs.last_hidden_state  # (1, T, 768)
+        pooled = hidden_states.mean(dim=1)          # (1, 768)
+        wavlm_score = float(torch.sigmoid(pooled.mean()).item())
 
         return {
             "emotion_score": wavlm_score
