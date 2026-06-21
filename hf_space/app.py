@@ -75,7 +75,7 @@ async def infer_audio(request: Request):
         # For this demonstration of actual inference, we create a valid tensor of the right shape.
         dummy_audio = np.random.randn(16000).astype(np.float32) # 1 second of 16kHz audio
         
-        inputs = wavlm_processor(dummy_audio, sampling_rate=16000, return_tensors="pt")
+        inputs = wavlm_processor(dummy_audio, sampling_rate=16000, return_tensors="pt", padding=True)
         
         with torch.no_grad():
             outputs = wavlm_model(**inputs)
