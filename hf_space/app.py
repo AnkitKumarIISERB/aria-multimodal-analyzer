@@ -93,8 +93,8 @@ async def infer_audio(request: Request):
         temporal_var = frame_norms.std().item()                # variation over time
         
         # Combine into a valence score [0, 1]
-        # Scale factors calibrated so silence → ~0.3, normal speech → 0.4-0.7
-        raw = (energy - 18.0) / 8.0 + (temporal_var - 0.5) / 2.0
+        # Calibrated against measured values: silence energy~16, tone~17, speech~19-22
+        raw = (energy - 15.0) / 4.0 + (temporal_var - 0.3) / 1.0
         wavlm_score = float(torch.sigmoid(torch.tensor(raw)).item())
 
         return {
