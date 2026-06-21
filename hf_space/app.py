@@ -98,7 +98,9 @@ async def infer_audio(request: Request):
         wavlm_score = float(torch.sigmoid(torch.tensor(raw)).item())
 
         return {
-            "emotion_score": wavlm_score
+            "emotion_score": wavlm_score,
+            "debug_energy": round(energy, 3),
+            "debug_temporal_var": round(temporal_var, 3)
         }
     except Exception as e:
         logger.error(f"Inference error: {e}")
