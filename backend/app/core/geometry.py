@@ -42,19 +42,21 @@ def extract_face_emotion(landmarks):
     
     score = 0.0
     
-    # Very crude baseline assumptions for normalization
-    # Normal EAR is ~0.25 to 0.35
-    if avg_ear < 0.20:
-        score -= 0.3  # Squinting or closed eyes
+    # EAR contribution: continuous mapping
+    # Normal EAR ~0.25-0.35, low → negative, high → slightly positive
+    ear_score = (avg_ear - 0.25) * 2.0  # maps 0.15→-0.2, 0.25→0, 0.35→0.2
+    score += max(-0.4, min(0.3, ear_score))
     
-    # Normal mouth width vs height
-    # If mouth is wide and slightly open -> Smile
+    # Mouth contribution: continuous mapping based on width and ratio
     mouth_ratio = mouth_width / (mouth_height + 1e-6)
     
-    if mouth_width > 0.08: # Arbitrary threshold, depends on face distance
-        score += 0.4 # Smiling
-    elif mouth_width < 0.05:
-        score -= 0.2 # Pursed lips
+    # Wider mouth → more positive (smile), narrow → negative (frown/pursed)
+    mouth_score = (mouth_width - 0.06) * 6.0  # maps 0.04→-0.12, 0.06→0, 0.10→0.24
+    score += max(-0.3, min(0.5, mouth_score))
+    
+    # Open mouth (surprise/talking) adds slight positive
+    if mouth_height > 0.02:
+        score += min(0.15, mouth_height * 3.0)
 
     # Clamp between -1.0 and 1.0
     return max(-1.0, min(1.0, score))
