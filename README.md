@@ -12,7 +12,7 @@
   </p>
 
   <h3>
-    <a href="https://aria-multimodal.vercel.app" target="_blank">🌐 Try the Live Demo</a>
+    <a href="https://aria-multimodal-analyzer.vercel.app" target="_blank">🌐 Try the Live Demo</a>
   </h3>
 </div>
 
@@ -197,5 +197,5 @@ cd ../frontend && npm install && npm run dev
 ---
 
 <div align="center">
-  <p>Built with 🔮 by Ankit Yadav</p>
+  <p>Built with 🔮 by Ankit</p>
 </div>
